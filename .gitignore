@@ -1,0 +1,9 @@
+logs/*
+plugins/*
+.env
+
+dags/__pycache__*
+
+.vscode/*
+venv/*
+config/airflow.cfg
