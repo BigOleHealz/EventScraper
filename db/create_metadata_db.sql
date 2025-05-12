@@ -1,3 +1,6 @@
+CREATE SCHEMA IF NOT EXISTS events;
+SET search_path TO events;
+
 DROP VIEW IF EXISTS events_joined_view;
 DROP VIEW IF EXISTS ingestions_joined_view;
 
@@ -125,26 +128,28 @@ ALTER TABLE sessions ADD FOREIGN KEY (account_uuid) REFERENCES users (UUID) ON D
 
 -- Sources
 INSERT INTO sources (source,source_url) VALUES
-  ('eventbrite','https://www.eventbrite.com/d/{state_code}-{city_code}/{event_type_id}--events/?page={page_no}&start_date={start_date}&end_date={end_date}'),
-  ('meetup','https://www.meetup.com/find/?location={country_code}--{state_code}--{city_code}&eventType=inPerson&source=EVENTS&customStartDate={start_date}T00%3A00%3A00-04%3A00&customEndDate={end_date}T23%3A59%3A00-04%3A00&distance=twentyFiveMiles&categoryId={event_type_id}');
+  ('eventbrite','https://www.eventbrite.com/d/{state_code}-{city_code}/{event_type_id}--events/?page={page_no}&start_date={start_date}&end_date={end_date}')
+  -- , ('meetup','https://www.meetup.com/find/?location={country_code}--{state_code}--{city_code}&eventType=inPerson&source=EVENTS&customStartDate={start_date}T00%3A00%3A00-04%3A00&customEndDate={end_date}T23%3A59%3A00-04%3A00&distance=twentyFiveMiles&categoryId={event_type_id}')
+  ;
 
 -- Regions
 INSERT INTO regions (city_code,state_code,country_code) VALUES
-  ('boston','ma','us'),
+  -- ('boston','ma','us'),
   ('philadelphia','pa','us'),
-  ('miami','fl','us'),
-  ('san-francisco', 'ca', 'us')
+  ('miami','fl','us')
+  -- , ('san-francisco', 'ca', 'us')
 ;
 
 -- event_types
 INSERT INTO event_types (UUID,EventType,PinColor) VALUES
   ('1f1d1c1b-1b1b-4e6e-8e0e-1e1e1d1c1b1b','Science & Technology','#FF0000'),
   ('29c65158-0a9f-4b14-8606-4f6bd4798e11','Health, Fitness, Sports, Wellness, & Yoga','#FFA500'),
-  -- ('501c8388-b139-485e-9095-8bec01fa9945','Social','#FFD700'),
-  -- ('5398ab6b-a7fb-41cd-abde-e91ef2771170','Comedy','#20B2AA'),
+  ('501c8388-b139-485e-9095-8bec01fa9945','Social','#FFD700'),
+  ('5398ab6b-a7fb-41cd-abde-e91ef2771170','Comedy','#20B2AA'),
   ('7abfc211-b49b-4572-8646-acb8fdfffb6c','Food & Drinks Specials','#8A2BE2'),
   ('8e2fa9d6-62d9-4439-a3ce-e22d0efd389f','Live Music & Concerts','#00FF00'),
-  ('9f730660-bf2e-40a9-9b04-33831eb91471','Professional & Networking','#0000FF');
+  ('9f730660-bf2e-40a9-9b04-33831eb91471','Professional & Networking','#0000FF')
+  ;
 
 INSERT INTO event_type_source_mappings (source_id,target_event_type_uuid,source_event_type_id,source_event_type_string) VALUES
   (1,'9f730660-bf2e-40a9-9b04-33831eb91471','business','business'),
@@ -152,13 +157,15 @@ INSERT INTO event_type_source_mappings (source_id,target_event_type_uuid,source_
   (1,'7abfc211-b49b-4572-8646-acb8fdfffb6c','food-and-drink','food-and-drink'),
   (1,'29c65158-0a9f-4b14-8606-4f6bd4798e11','health','health'),
   (1,'29c65158-0a9f-4b14-8606-4f6bd4798e11','sports-and-fitness','sports-and-fitness'),
-  (1,'1f1d1c1b-1b1b-4e6e-8e0e-1e1e1d1c1b1b','science-and-tech','science-and-tech'),
-  (2,'9f730660-bf2e-40a9-9b04-33831eb91471','405','Career & Business'),
-  (2,'29c65158-0a9f-4b14-8606-4f6bd4798e11','511','Health & Wellbeing'),
-  (2,'8e2fa9d6-62d9-4439-a3ce-e22d0efd389f','395','Music'),
-  (2,'1f1d1c1b-1b1b-4e6e-8e0e-1e1e1d1c1b1b','436','Science & Education'),
-  (2,'29c65158-0a9f-4b14-8606-4f6bd4798e11','482','Sports & Fitness'),
-  (2,'1f1d1c1b-1b1b-4e6e-8e0e-1e1e1d1c1b1b','546','Technology') -- ,
+  (1,'1f1d1c1b-1b1b-4e6e-8e0e-1e1e1d1c1b1b','science-and-tech','science-and-tech')
+  -- ,
+
+  -- (2,'9f730660-bf2e-40a9-9b04-33831eb91471','405','Career & Business'),
+  -- (2,'29c65158-0a9f-4b14-8606-4f6bd4798e11','511','Health & Wellbeing'),
+  -- (2,'8e2fa9d6-62d9-4439-a3ce-e22d0efd389f','395','Music'),
+  -- (2,'1f1d1c1b-1b1b-4e6e-8e0e-1e1e1d1c1b1b','436','Science & Education'),
+  -- (2,'29c65158-0a9f-4b14-8606-4f6bd4798e11','482','Sports & Fitness'),
+  -- (2,'1f1d1c1b-1b1b-4e6e-8e0e-1e1e1d1c1b1b','546','Technology') -- ,
   -- (2,'501c8388-b139-485e-9095-8bec01fa9945','652','Social Activites')
 ;
 

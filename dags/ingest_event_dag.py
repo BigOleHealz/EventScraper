@@ -1,16 +1,20 @@
-import os
-import json
-import logging
-import traceback
+
+import os, re, json, logging, sys, traceback
+
 from datetime import datetime
 from typing import List, Dict
+from dotenv import load_dotenv
 
 import requests
-from dotenv import load_dotenv
-from fetchfox_sdk import FetchFox
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+
+current = os.path.dirname(os.path.realpath(__file__))
+parent = os.path.dirname(current)
+sys.path.append(parent)
+
+from db.MetadataHandler import MetadataHandler
 
 # Load environment variables
 load_dotenv()
@@ -19,20 +23,24 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# API clients
-fox = FetchFox(api_key=os.getenv("FETCHFOX_API_KEY"))
 eventbrite_api_key = os.getenv("EVENTBRITE_API_KEY")
 
-def retrieve_event_ids(category: str, location_id: str, page_no: int, date: str, **context) -> List[int]:
-    url = f"https://www.eventbrite.com/d/{location_id}/{category}--events/?page={page_no}&start_date={date}&end_date={date}"
-    items = fox.extract(url, {"eventbite_event_id": "event_id"})
-    event_ids = []
-    for item in items:
-        try:
-            event_ids.append(int(item["eventbite_event_id"]))
-        except Exception:
-            logger.error(f"Invalid event ID: {item}")
-    logger.info(f"Retrieved {len(event_ids)} event IDs for {location_id}, {category}, {date}, page {page_no}")
+PAGE_NOS = 5
+
+def retrieve_event_ids(event_type: str, state_code: str, city_code: str, page_no: int, date: str, **context) -> List[int]:
+    url = f"https://www.eventbrite.com/d/{state_code}--{city_code}/{event_type}--events/?page={page_no}&start_date={date}&end_date={date}"
+    logger.info(f"Retrieving event IDs from {url}")
+    response = requests.get(url)
+    if not response.ok:
+        logger.error(f"Failed to retrieve event IDs from {url}: {response.status_code}")
+        return []
+    
+    text = response.text
+    
+    pattern = r'"eventbrite_event_id"\s*:\s*"(\d+)"'
+    event_ids = [int(event_id) for event_id in re.findall(pattern, text)]
+    logger.info(f"Event IDs: {event_ids}")
+    logger.info(f"Retrieved {len(event_ids)} event IDs for {city_code}, {state_code}, {event_type}, {date}, page {page_no}")
     return event_ids
 
 def fetch_event_details(event_id: int) -> Dict:
@@ -40,23 +48,22 @@ def fetch_event_details(event_id: int) -> Dict:
     headers = {"Authorization": f"Bearer {eventbrite_api_key}"}
     response = requests.get(url, headers=headers)
     if response.ok:
+        logger.info(f"Fetched event {event_id}: {response.json()}")
         return response.json()
-    else:
-        logger.error(f"Failed to fetch event {event_id}: {response.status_code}")
-        return None
+    logger.error(f"Failed to fetch event {event_id}: {response.status_code}")
+    return None
 
-def fetch_details_for_event_ids(category: str, location_id: str, date: str, page_no: int, **context) -> List[Dict]:
-    task_id = f'retrieve_event_ids_{location_id}_{category}_{date}_{page_no}'
+def fetch_details_for_event_ids(event_type: str, state_code: str, city_code: str, date: str, page_no: int, **context) -> List[Dict]:
+    task_id = f'retrieve_event_ids_{state_code}--{city_code}_{event_type}_{date}_{page_no}'
     event_ids = context['ti'].xcom_pull(task_ids=task_id, key='return_value')
     if not event_ids:
-        logger.warning(f"No event IDs found for {location_id}, {category}, {date}, page {page_no}")
+        logger.warning(f"No event IDs found for {state_code}, {city_code}, {event_type}, {date}, page {page_no}")
         return []
 
     event_details = []
     for event_id in event_ids:
         try:
-            details = fetch_event_details(event_id)
-            if details:
+            if details := fetch_event_details(event_id):
                 event_details.append({
                     "event_id": details.get("id"),
                     "event_name": details.get("name", {}).get("text"),
@@ -71,6 +78,7 @@ def fetch_details_for_event_ids(category: str, location_id: str, date: str, page
         except Exception as e:
             logger.error(f"Error fetching details for event {event_id}: {e}")
             logger.error(traceback.format_exc())
+    logger.info(f"Fetched {len(event_details)} event details")
     return event_details
 
 def write_all_event_details(**context):
@@ -78,8 +86,7 @@ def write_all_event_details(**context):
     all_event_details = []
 
     for task_id in context['task'].upstream_task_ids:
-        details = ti.xcom_pull(task_ids=task_id, key='return_value')
-        if details:
+        if details := ti.xcom_pull(task_ids=task_id, key='return_value'):
             all_event_details.extend(details)
 
     with open("event_details.json", "w") as f:
@@ -88,60 +95,88 @@ def write_all_event_details(**context):
     logger.info(f"Wrote {len(all_event_details)} events to event_details.json")
     return all_event_details
 
-def generate_search_terms():
-    return {
-        'location_ids': ['pa--philadelphia', 'ma--boston'],
-        'categories': ['business', 'technology'],
-        'page_nos': list(range(2)),
-        'dates': ['2025-05-09', '2025-05-10']
-    }
+def get_search_terms_from_db():
+    logger.info("Fetching search terms from metadata DB...")
+    handler = MetadataHandler(logger=logger)
+    return handler.get_ingestions_to_attempt()
+
 
 with DAG(
-    dag_id="ingest_event_dag",
+    dag_id="ingest_events_dag",
     start_date=datetime(2024, 1, 1),
     schedule=None,
     catchup=False,
 ) as dag:
 
+    # Entry point
     start = PythonOperator(
         task_id="start",
-        python_callable=lambda: logger.info("Starting DAG")
+        python_callable=lambda: logger.info("Starting ingest_events_dag"),
     )
 
-    search_terms = generate_search_terms()
-    event_detail_tasks = []
+    # Fetch search terms from metadata DB
+    search_df = get_search_terms_from_db()
+    region_ids = search_df["region_id"].unique().tolist()
 
-    for location_id in search_terms['location_ids']:
-        location_task = PythonOperator(
-            task_id=f"location_{location_id}",
-            python_callable=lambda location_id=location_id: logger.info(f"Processing {location_id}"),
+    # Collect detail-fetch tasks to chain to write
+    event_detail_tasks: List[PythonOperator] = []
+
+    for region_id in region_ids:
+        region_df = search_df[search_df["region_id"] == region_id]
+        state_code = region_df["state_code"].iloc[0]
+        city_code = region_df["city_code"].iloc[0]
+
+        # Region-level task
+        region_task = PythonOperator(
+            task_id=f"{state_code}--{city_code}",
+            python_callable=lambda: logger.info(f"Processing region {region_id}"),
+            op_kwargs={"region_id": region_id},
+            doc=f"Process region {region_id}",
         )
-        start >> location_task
+        start >> region_task
 
-        for category in search_terms['categories']:
-            for date in search_terms['dates']:
-                for page_no in search_terms['page_nos']:
-                    op_kwargs = {
-                        'category': category,
-                        'location_id': location_id,
-                        'date': date,
-                        'page_no': page_no,
+        # Event-type and date scoping
+        for event_type in region_df["source_event_type_string"].unique():
+            event_type_df = region_df[region_df["source_event_type_string"] == event_type]
+            event_task = PythonOperator(
+                task_id=f"{state_code}--{city_code}_{event_type}",
+                python_callable=lambda: logger.info(f"Processing event type {event_type}"),
+                op_kwargs={"event_type": event_type},
+                doc=f"Process event type {event_type}",
+            )
+            region_task >> event_task
+
+            for date in event_type_df["date"].unique():
+                date_task = PythonOperator(
+                    task_id=f"{state_code}--{city_code}_{event_type}_{date}",
+                    python_callable=lambda: logger.info(f"Processing date {date}"),
+                    op_kwargs={"date": date},
+                    doc=f"Process date {date}",
+                )
+                event_task >> date_task
+
+                # Paging through search results
+                for page_no in range(1, PAGE_NOS):
+                    common_kwargs = {
+                        "event_type": event_type,
+                        "state_code": state_code,
+                        "city_code": city_code,
+                        "date": date,
+                        "page_no": page_no,
                     }
-
                     retrieve_task = PythonOperator(
-                        task_id=f"retrieve_event_ids_{location_id}_{category}_{date}_{page_no}",
+                        task_id=f'retrieve_event_ids_{state_code}--{city_code}_{event_type}_{date}_{page_no}',
                         python_callable=retrieve_event_ids,
-                        op_kwargs=op_kwargs
+                        op_kwargs=common_kwargs,
                     )
-
                     fetch_task = PythonOperator(
-                        task_id=f"fetch_event_details_{location_id}_{category}_{date}_{page_no}",
+                        task_id=f"fetch_{state_code}--{city_code}_{event_type}_{date}_{page_no}",
                         python_callable=fetch_details_for_event_ids,
-                        op_kwargs=op_kwargs
+                        op_kwargs=common_kwargs,
                     )
-
-                    location_task >> retrieve_task >> fetch_task
+                    date_task >> retrieve_task >> fetch_task
                     event_detail_tasks.append(fetch_task)
+
 
     write_task = PythonOperator(
         task_id="write_all_event_details",

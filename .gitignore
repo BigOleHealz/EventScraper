@@ -2,7 +2,7 @@ logs/*
 plugins/*
 .env
 
-dags/__pycache__*
+**__pycache__**
 
 .vscode/*
 venv/*

@@ -80,6 +80,7 @@ x-airflow-common:
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    - ${AIRFLOW_PROJ_DIR:-.}/db:/opt/airflow/db
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -99,25 +100,6 @@ services:
       - postgres-db-volume:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
-      interval: 10s
-      retries: 5
-      start_period: 5s
-    restart: always
-  
-  events-postgres:
-    image: postgres:13
-    container_name: events-postgres
-    environment:
-      POSTGRES_DB: ${EVENTS_DB_NAME}
-      POSTGRES_USER: ${EVENTS_DB_USER}
-      POSTGRES_PASSWORD: ${EVENTS_DB_PASSWORD}
-    ports:
-      - "${EVENTS_DB_PORT}:5432"
-    volumes:
-      - events-postgres-db-volume:/var/lib/postgresql/data
-      - ./db/create_metadata_db.sql:/docker-entrypoint-initdb.d/create_metadata_db.sql
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${EVENTS_DB_USER}"]
       interval: 10s
       retries: 5
       start_period: 5s
