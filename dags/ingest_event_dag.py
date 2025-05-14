@@ -53,6 +53,14 @@ def fetch_event_details(event_id: int) -> Dict:
     logger.error(f"Failed to fetch event {event_id}: {response.status_code}")
     return None
 
+def fetch_venue_details(venue_id: int) -> Dict:
+    url = f"https://www.eventbriteapi.com/v3/venues/{venue_id}"
+    headers = {"Authorization": f"Bearer {eventbrite_api_key}"}
+    response = requests.get(url, headers=headers)
+    if response.ok:
+        return response.json()
+    logger.error(f"Failed to fetch venue {venue_id}: {response.status_code}")
+
 def fetch_details_for_event_ids(event_type: str, state_code: str, city_code: str, date: str, page_no: int, **context) -> List[Dict]:
     task_id = f'retrieve_event_ids_{state_code}--{city_code}_{event_type}_{date}_{page_no}'
     event_ids = context['ti'].xcom_pull(task_ids=task_id, key='return_value')
@@ -64,17 +72,36 @@ def fetch_details_for_event_ids(event_type: str, state_code: str, city_code: str
     for event_id in event_ids:
         try:
             if details := fetch_event_details(event_id):
-                event_details.append({
-                    "event_id": details.get("id"),
-                    "event_name": details.get("name", {}).get("text"),
-                    "event_url": details.get("url"),
-                    "event_start_time": details.get("start", {}).get("local"),
-                    "event_end_time": details.get("end", {}).get("local"),
-                    "event_description": details.get("description", {}).get("text"),
-                    "venue_id": details.get("venue_id"),
-                    "category_id": details.get("category_id"),
-                    "is_free": details.get("is_free"),
-                })
+                if venue_id := details.get("venue_id"):
+                    venue_details = fetch_venue_details(venue_id)
+                    logger.info(f"Fetched venue {venue_id}: {venue_details}")
+                    details["venue"] = venue_details
+
+                    event_uuid = details.get("id")
+                    event_url = details.get("url")
+                    event_details.append({
+                        "UUID": event_uuid,
+                        "EventName": details.get("name", {}).get("text"),
+                        "Source": "eventbrite",
+                        "SourceEventID": details.get("id"),
+                        "EventURL": event_url,
+                        "StartTimestamp": details.get("start", {}).get("local"),
+                        "EndTimestamp": details.get("end", {}).get("local"),
+                        
+                        "Lon": details.get("venue", {}).get("longitude"),
+                        "Lat": details.get("venue", {}).get("latitude"),
+                        "Address": details.get("venue", {}).get("address", {}).get("localized_address_display"),
+                        "Host": details.get("venue", {}).get("name"),
+                        
+                        "PublicEventFlag": True,
+                        "EventDescription": details.get("description", {}).get("text"),
+                        "Summary": details.get("summary", ""),
+                        "ImageURL": details.get("logo", {}).get("original", {}).get("url"),
+                        "EventPageURL": event_url,
+                        "Price": 0,
+                        "FreeEventFlag": details.get("is_free"),
+                        "S3Link": "",
+                    })
         except Exception as e:
             logger.error(f"Error fetching details for event {event_id}: {e}")
             logger.error(traceback.format_exc())

@@ -21,22 +21,7 @@ class MetadataHandler(abc.ABC):
         self.logger = logger
 
         try:
-            events_db_user = os.getenv("EVENTS_DB_USER")
-            events_db_password = os.getenv("EVENTS_DB_PASSWORD")
-            events_db_host = os.getenv("EVENTS_DB_HOST")
-            events_db_port = os.getenv("EVENTS_DB_PORT")
-            events_db_name = os.getenv("EVENTS_DB_NAME")
-            database_url = f'postgresql://{events_db_user}:{events_db_password}@{events_db_host}:{events_db_port}/{events_db_name}'
-            
-            if not database_url:
-                raise Exception("Database URL not found in environment variables")
-
-        except Exception as error:
-            self.logger.error(msg=error)
-            self.logger.error(msg=f"An error occurred while getting the database credentials from AWS Secrets Manager: {traceback.format_exc()}")
-            raise error
-        try:    
-            self.connection = psycopg2.connect(database_url)
+            self.connection = psycopg2.connect(os.getenv("EVENTS_DB_CONNECTION_STRING"))
             self.cursor = self.connection.cursor()
 
         except Exception as error:
